@@ -1,5 +1,1 @@
-{
-  "build": {
-    "builder": "NIXPACKS"
-  }
-}
+{"build": {"builder": "NIXPACKS"}, "scripts": {"start": "gunicorn event:app"}}
