@@ -1,71 +1,41 @@
 from flask import Flask, render_template_string, request, redirect, url_for
-import os
 import sqlite3
-import mysql.connector
+import os
 
 app = Flask(__name__)
 
-# Detect if running on Railway
-ON_RAILWAY = 'MYSQLHOST' in os.environ
+# Use /tmp/ for Railway (writable location) or local folder
+DB_PATH = '/tmp/events.db' if 'RAILWAY' in os.environ else 'events.db'
 
 def get_db_connection():
-    if ON_RAILWAY:
-        # Use Railway MySQL in production
-        return mysql.connector.connect(
-            host=os.environ['MYSQLHOST'],
-            user=os.environ['MYSQLUSER'],
-            password=os.environ['MYSQLPASSWORD'],
-            database=os.environ['MYSQLDATABASE'],
-            port=int(os.environ.get('MYSQLPORT', 3306))
-        )
-    else:
-        # Use SQLite locally (no XAMPP needed!)
-        conn = sqlite3.connect('events.db')
-        conn.row_factory = sqlite3.Row
-        return conn
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
-    if ON_RAILWAY:
-        # MySQL table creation
-        conn = get_db_connection()
-        cursor = conn.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            event_date TEXT NOT NULL,
+            location TEXT NOT NULL,
+            description TEXT
+        )
+    """)
+    # Add sample data if table is empty
+    cursor.execute("SELECT COUNT(*) FROM events")
+    count = cursor.fetchone()[0]
+    if count == 0:
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(200) NOT NULL,
-                event_date DATE NOT NULL,
-                location VARCHAR(200) NOT NULL,
-                description TEXT
-            )
+            INSERT INTO events (name, event_date, location, description) VALUES
+            ('Cloud Computing Workshop', '2026-04-10', 'Room 101', 'Learn about PaaS deployment'),
+            ('Career Fair', '2026-04-15', 'Main Hall', 'Meet potential employers'),
+            ('Hackathon Kickoff', '2026-04-20', 'Online', '24-hour coding competition')
         """)
         conn.commit()
-        cursor.close()
-        conn.close()
-    else:
-        # SQLite table creation (local testing)
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                event_date TEXT NOT NULL,
-                location TEXT NOT NULL,
-                description TEXT
-            )
-        """)
-        # Add sample data if table is empty
-        cursor.execute("SELECT COUNT(*) FROM events")
-        count = cursor.fetchone()[0]
-        if count == 0:
-            cursor.execute("""
-                INSERT INTO events (name, event_date, location, description) VALUES
-                ('Cloud Computing Workshop', '2026-04-10', 'Room 101', 'Learn about PaaS deployment'),
-                ('Career Fair', '2026-04-15', 'Main Hall', 'Meet potential employers'),
-                ('Hackathon Kickoff', '2026-04-20', 'Online', '24-hour coding competition')
-            """)
-            conn.commit()
-        conn.close()
+    conn.close()
     print("✅ Database ready")
 
 # HTML + CSS + JavaScript all in one template
@@ -255,7 +225,6 @@ def index():
     cursor = conn.cursor()
     cursor.execute("SELECT id, name, event_date, location, description FROM events ORDER BY event_date")
     events = cursor.fetchall()
-    cursor.close()
     conn.close()
     return render_template_string(HTML_TEMPLATE, events=events, request=request)
 
@@ -268,19 +237,11 @@ def add_event():
         description = request.form.get('description', '')
         
         conn = get_db_connection()
-        cursor = conn.cursor()
-        if ON_RAILWAY:
-            cursor.execute(
-                "INSERT INTO events (name, event_date, location, description) VALUES (%s, %s, %s, %s)",
-                (name, event_date, location, description)
-            )
-        else:
-            cursor.execute(
-                "INSERT INTO events (name, event_date, location, description) VALUES (?, ?, ?, ?)",
-                (name, event_date, location, description)
-            )
+        conn.execute(
+            "INSERT INTO events (name, event_date, location, description) VALUES (?, ?, ?, ?)",
+            (name, event_date, location, description)
+        )
         conn.commit()
-        cursor.close()
         conn.close()
         return redirect(url_for('index'))
     
@@ -288,49 +249,31 @@ def add_event():
 
 @app.route('/edit/<int:id>', methods=['GET', 'POST'])
 def edit_event(id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
     if request.method == 'POST':
         name = request.form['name']
         event_date = request.form['event_date']
         location = request.form['location']
         description = request.form.get('description', '')
         
-        if ON_RAILWAY:
-            cursor.execute(
-                "UPDATE events SET name=%s, event_date=%s, location=%s, description=%s WHERE id=%s",
-                (name, event_date, location, description, id)
-            )
-        else:
-            cursor.execute(
-                "UPDATE events SET name=?, event_date=?, location=?, description=? WHERE id=?",
-                (name, event_date, location, description, id)
-            )
+        conn = get_db_connection()
+        conn.execute(
+            "UPDATE events SET name=?, event_date=?, location=?, description=? WHERE id=?",
+            (name, event_date, location, description, id)
+        )
         conn.commit()
-        cursor.close()
         conn.close()
         return redirect(url_for('index'))
     
-    if ON_RAILWAY:
-        cursor.execute("SELECT id, name, event_date, location, description FROM events WHERE id=%s", (id,))
-    else:
-        cursor.execute("SELECT id, name, event_date, location, description FROM events WHERE id=?", (id,))
-    event = cursor.fetchone()
-    cursor.close()
+    conn = get_db_connection()
+    event = conn.execute("SELECT * FROM events WHERE id=?", (id,)).fetchone()
     conn.close()
     return render_template_string(HTML_TEMPLATE, event=event, request=request)
 
 @app.route('/delete/<int:id>')
 def delete_event(id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    if ON_RAILWAY:
-        cursor.execute("DELETE FROM events WHERE id=%s", (id,))
-    else:
-        cursor.execute("DELETE FROM events WHERE id=?", (id,))
+    conn.execute("DELETE FROM events WHERE id=?", (id,))
     conn.commit()
-    cursor.close()
     conn.close()
     return redirect(url_for('index'))
 
