@@ -36,7 +36,7 @@ def init_db():
         """)
         conn.commit()
     conn.close()
-    print("✅ Database ready")
+    print(" Database ready")
 
 # HTML + CSS + JavaScript all in one template
 HTML_TEMPLATE = """
